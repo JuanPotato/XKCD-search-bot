@@ -1,0 +1,24 @@
+[package]
+name = "xtbot"
+version = "0.1.0"
+authors = ["Hasan Ibraheem <hasantiny@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+tokio = "0.1"
+futures-preview = { version = "0.3.0-alpha.16", features = ["compat"] }
+
+reqwest = { version = "0.9", features = ["trust-dns"] }
+
+tg_botapi = "0.6.0-alpha.2"
+#toml = "0.5"
+#quicli = "0.4"
+#structopt = "0.2"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+
+tantivy = "0.9"
+tempdir = "0.3.7"
+chrono = "0.4"
+select = "0.4.2"
