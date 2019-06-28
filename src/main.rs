@@ -5,7 +5,6 @@
 #![feature(async_await)]
 
 use std::sync::Arc;
-use tempdir::TempDir;
 
 use futures::{FutureExt, StreamExt, TryFutureExt};
 use tantivy::collector::TopDocs;
@@ -47,8 +46,7 @@ async fn async_main() -> tantivy::Result<()> {
     schema_builder.add_text_field("img", TEXT | STORED);
 
     let schema = schema_builder.build();
-    let index_path = TempDir::new("index_dir")?;
-    let index = Index::create_in_dir(&index_path, schema.clone())?;
+    let index = Index::create_in_ram(schema.clone());
 
     let mut index_writer = index.writer(50_000_000)?;
 
