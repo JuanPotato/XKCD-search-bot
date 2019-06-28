@@ -27,7 +27,7 @@ pub struct XkcdInfo {
     pub day: String,
 }
 
-pub async fn update_comics(comic_path: &str) -> HashMap<String, XkcdInfo> {
+pub async fn update_comics(comic_path: &str) -> (usize, HashMap<String, XkcdInfo>) {
     let mut xkcd_comics_file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -49,9 +49,9 @@ pub async fn update_comics(comic_path: &str) -> HashMap<String, XkcdInfo> {
         s.parse::<usize>().unwrap()
     }).max().unwrap_or(1);
 
-    let comic_start: usize = last_scrapped_comic.checked_sub(6).unwrap_or(0) + 1;
+    let comic_start: usize = last_scrapped_comic.checked_sub(3).unwrap_or(0) + 1;
 
-    xkcd_comics = scrape_comics(arc_client, comic_start..latest_comic_num, xkcd_comics).await;
+    xkcd_comics = scrape_comics(arc_client, comic_start..=latest_comic_num, xkcd_comics).await;
 
     let output = serde_json::to_string_pretty(&xkcd_comics).unwrap();
 
@@ -59,7 +59,7 @@ pub async fn update_comics(comic_path: &str) -> HashMap<String, XkcdInfo> {
     xkcd_comics_file.set_len(0).unwrap();
     xkcd_comics_file.write_all(output.as_bytes()).unwrap();
 
-    xkcd_comics
+    (latest_comic_num, xkcd_comics)
 }
 
 

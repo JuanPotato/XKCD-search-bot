@@ -5,12 +5,15 @@
 #![feature(async_await)]
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::{FutureExt, StreamExt, TryFutureExt};
+use futures_timer::Interval;
+
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::*;
-use tantivy::{ReloadPolicy, IndexReader};
+use tantivy::{ReloadPolicy, IndexReader, IndexWriter};
 use tantivy::Index;
 
 mod scraper;
@@ -24,7 +27,6 @@ fn main() {
     tokio::run(async_main().map(Result::unwrap).boxed().unit_error().compat());
 }
 
-
 struct XkcdBot {
     api: Bot,
     num_field: Field,
@@ -36,10 +38,8 @@ struct XkcdBot {
 }
 
 async fn async_main() -> tantivy::Result<()> {
-    let xkcd_comics = scraper::update_comics("xkcd.json").await;
-
     let mut schema_builder = Schema::builder();
-    schema_builder.add_text_field("num", TEXT | STORED);
+    schema_builder.add_text_field("num", STRING | STORED);
     schema_builder.add_text_field("title", TEXT | STORED);
     schema_builder.add_text_field("alt", TEXT | STORED);
     schema_builder.add_text_field("transcript", TEXT);
@@ -48,7 +48,7 @@ async fn async_main() -> tantivy::Result<()> {
     let schema = schema_builder.build();
     let index = Index::create_in_ram(schema.clone());
 
-    let mut index_writer = index.writer(50_000_000)?;
+    let index_writer = index.writer(50_000_000)?;
 
     let num = schema.get_field("num").unwrap();
     let title = schema.get_field("title").unwrap();
@@ -56,18 +56,23 @@ async fn async_main() -> tantivy::Result<()> {
     let transcript = schema.get_field("transcript").unwrap();
     let img = schema.get_field("img").unwrap();
 
-    for (comic_num, comic) in xkcd_comics.iter() {
-        let mut comic_doc = Document::default();
-        comic_doc.add_text(num, &comic_num);
-        comic_doc.add_text(title, &comic.title);
-        comic_doc.add_text(alt, &comic.alt);
-        comic_doc.add_text(transcript, &comic.transcript);
-        comic_doc.add_text(img, &comic.img);
+    let mut index_updater = IndexUpdater {
+        index_writer: index_writer,
+        num_field: num.clone(),
+        title_field: title.clone(),
+        alt_field: alt.clone(),
+        transcript_field: transcript.clone(),
+        img_field: img.clone(),
+    };
 
-        index_writer.add_document(comic_doc);
-    }
+    index_updater.update(true).await?;
 
-    index_writer.commit()?;
+    tokio::spawn(async move {
+        let mut interval = Interval::new(Duration::from_secs(24*60*60));
+        while let Some(_) = interval.next().await {
+            index_updater.update(false).await.unwrap();
+        }
+    }.boxed().unit_error().compat());
 
     let reader = index
         .reader_builder()
@@ -101,6 +106,54 @@ async fn async_main() -> tantivy::Result<()> {
     }
 
     Ok(())
+}
+
+struct IndexUpdater {
+    index_writer: IndexWriter,
+    num_field: Field,
+    title_field: Field,
+    alt_field: Field,
+    transcript_field: Field,
+    img_field: Field,
+}
+
+impl IndexUpdater {
+    async fn update(&mut self, initial_load: bool) -> tantivy::Result<()> {
+        let (latest_num, xkcd_comics) = scraper::update_comics("xkcd.json").await;
+
+        if initial_load {
+            for (comic_num, comic) in xkcd_comics.iter() {
+                let mut comic_doc = Document::default();
+                comic_doc.add_text(self.num_field, &comic_num);
+                comic_doc.add_text(self.title_field, &comic.title);
+                comic_doc.add_text(self.alt_field, &comic.alt);
+                comic_doc.add_text(self.transcript_field, &comic.transcript);
+                comic_doc.add_text(self.img_field, &comic.img);
+
+                self.index_writer.add_document(comic_doc);
+            }
+        } else {
+            for xkcd_num in latest_num-3 ..= latest_num {
+                let xkcd_str = format!("{}", xkcd_num);
+                let xkcd_term = Term::from_field_text(self.num_field, &xkcd_str);
+                self.index_writer.delete_term(xkcd_term);
+
+                let comic = xkcd_comics.get(&xkcd_str).unwrap();
+                let mut comic_doc = Document::default();
+                comic_doc.add_text(self.num_field, &xkcd_str);
+                comic_doc.add_text(self.title_field, &comic.title);
+                comic_doc.add_text(self.alt_field, &comic.alt);
+                comic_doc.add_text(self.transcript_field, &comic.transcript);
+                comic_doc.add_text(self.img_field, &comic.img);
+
+                self.index_writer.add_document(comic_doc);
+            }
+        }
+
+        self.index_writer.commit()?;
+
+        Ok(())
+    }
 }
 
 async fn handle_inline_query(bot: Arc<XkcdBot>, query: InlineQuery) {
